@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.kestra.core.http.HttpRequest;
 import io.kestra.core.http.HttpResponse;
 import io.kestra.core.http.client.HttpClient;
-import io.kestra.core.http.client.configurations.HttpConfiguration;
-import io.kestra.core.http.client.configurations.TimeoutConfiguration;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.property.Data;
@@ -25,9 +23,7 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 import org.slf4j.Logger;
 
-import java.net.URI;
 import java.time.Duration;
-import java.util.Set;
 
 @SuperBuilder
 @ToString
@@ -35,20 +31,19 @@ import java.util.Set;
 @Getter
 @NoArgsConstructor
 @Schema(
-    title = "Solve an optimization problem on the Timefold Platform",
+    title = "Submit an optimization problem to the Timefold Platform",
     description = "Submits a `modelInput` dataset to a Timefold Platform model (Field Service Routing " +
-        "or Employee Scheduling), polls the platform until solving completes (or the configured " +
-        "`solveDuration` elapses), then returns the optimized `modelOutput`.\n\n" +
-        "The task wraps three Timefold REST calls: a `POST` to submit the dataset (returning a job id), " +
-        "repeated `GET .../{id}/metadata` calls to track the `solverStatus`, and a final " +
-        "`GET .../{id}` to retrieve the full solution. See the " +
+        "or Employee Scheduling) and immediately returns the `jobId` assigned by the platform.\n\n" +
+        "The task performs a single `POST` to submit the dataset and does not wait for solving to " +
+        "finish. Use the returned `jobId` in a subsequent task (e.g. a polling or retrieval task) " +
+        "to track progress and fetch the optimized solution. See the " +
         "[Timefold API documentation](https://docs.timefold.ai/field-service-routing/latest/understanding-the-api)."
 )
 @Plugin(
     examples = {
         @Example(
             full = true,
-            title = "Solve a Field Service Routing problem and return the optimized routes.",
+            title = "Submit a Field Service Routing problem and capture the job ID for downstream tasks.",
             code = """
                 id: timefold_route
                 namespace: company.team
@@ -70,11 +65,14 @@ import java.util.Set;
                         - id: Visit A
                           location: [33.77301, -84.43838]
                           serviceDuration: PT1H30M
+                  - id: log_job_id
+                    type: io.kestra.plugin.core.log.Log
+                    message: "Submitted job: {{ outputs.solve.jobId }}"
                 """
         ),
         @Example(
             full = true,
-            title = "Solve an Employee Scheduling problem, passing the input from a previous task as JSON.",
+            title = "Submit an Employee Scheduling problem with input from a previous task.",
             code = """
                 id: timefold_schedule
                 namespace: company.team
@@ -92,9 +90,6 @@ import java.util.Set;
 )
 public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Output> {
     private static final ObjectMapper MAPPER = JacksonMapper.ofJson();
-    private static final Set<String> RUNNING_STATUSES = Set.of(
-        "SOLVING_SCHEDULED", "SOLVING_ACTIVE", "NOT_SOLVING"
-    );
 
     @Schema(
         title = "The optimization input dataset (`modelInput`)",
@@ -108,10 +103,10 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
     private Object modelInput;
 
     @Schema(
-        title = "Maximum time Timefold should spend solving before returning the best solution found",
-        description = "Passed as the `config.run.termination.spentLimit` of the dataset. If solving has " +
-            "not finished after this duration, the task asks the platform to terminate and returns the " +
-            "best solution found so far. Defaults to `PT60S` (60 seconds)."
+        title = "Maximum time Timefold should spend solving",
+        description = "Passed as the `config.run.termination.spentLimit` of the submitted dataset. " +
+            "Controls how long the platform solver runs; it does not affect when this task returns. " +
+            "Defaults to `PT60S` (60 seconds)."
     )
     @NotNull
     @Builder.Default
@@ -123,84 +118,23 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
     )
     private Property<String> runName;
 
-    @Schema(
-        title = "How often to poll the Timefold Platform for the solver status",
-        description = "Defaults to `PT2S` (every 2 seconds)."
-    )
-    @NotNull
-    @Builder.Default
-    private Property<Duration> pollInterval = Property.ofValue(Duration.ofSeconds(2));
-
-    @Schema(
-        title = "Overall timeout for the whole operation, including queueing on the platform",
-        description = "If the solver has not completed within this duration the task fails. " +
-            "Should comfortably exceed `solveDuration`. Defaults to `PT10M` (10 minutes)."
-    )
-    @NotNull
-    @Builder.Default
-    private Property<Duration> requestTimeout = Property.ofValue(Duration.ofMinutes(10));
-
     @Override
     public Output run(RunContext runContext) throws Exception {
         Logger logger = runContext.logger();
 
-        String rApiKey = runContext.render(this.apiKey).as(String.class).orElseThrow();
-        TimefoldModel rModel = runContext.render(this.model).as(TimefoldModel.class).orElseThrow();
-        String rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse("https://app.timefold.ai");
+        Connection conn = renderConnection(runContext);
         Duration rSolveDuration = runContext.render(this.solveDuration).as(Duration.class).orElseThrow();
-        Duration rPollInterval = runContext.render(this.pollInterval).as(Duration.class).orElseThrow();
-        Duration rRequestTimeout = runContext.render(this.requestTimeout).as(Duration.class).orElseThrow();
         String rRunName = runContext.render(this.runName).as(String.class).orElse(null);
 
-        String collectionUrl = String.format(
-            "%s/api/models/%s/v1/%s",
-            stripTrailingSlash(rBaseUrl),
-            rModel.modelId(),
-            rModel.resource()
-        );
-
+        String collectionUrl = collectionUrl(conn.baseUrl(), conn.model());
         JsonNode datasetBody = buildDataset(runContext, rSolveDuration, rRunName);
 
-        HttpConfiguration configuration = HttpConfiguration.builder()
-            .timeout(TimeoutConfiguration.builder()
-                .connectTimeout(Property.ofValue(Duration.ofSeconds(30)))
-                .readIdleTimeout(Property.ofValue(Duration.ofSeconds(60)))
-                .build())
-            .build();
-
-        try (HttpClient client = HttpClient.builder()
-            .runContext(runContext)
-            .configuration(configuration)
-            .build()) {
-
-            // 1. Submit the dataset.
-            String jobId = submit(client, collectionUrl, rApiKey, datasetBody, logger);
-            logger.info("Submitted dataset to Timefold model '{}', job id: {}", rModel.modelId(), jobId);
-
-            // 2. Poll the metadata endpoint until the solver completes.
-            JsonNode metadata = pollUntilComplete(
-                client, collectionUrl, jobId, rApiKey,
-                rPollInterval, rRequestTimeout, rSolveDuration,
-                logger
-            );
-
-            String solverStatus = text(metadata, "solverStatus");
-            String score = text(metadata, "score");
-            logger.info("Solving finished with status '{}' and score '{}'", solverStatus, score);
-
-            // 3. Fetch the full solution.
-            JsonNode solution = httpGet(client, collectionUrl + "/" + jobId, rApiKey);
-            JsonNode modelOutput = solution.get("modelOutput");
-
-            runContext.metric(io.kestra.core.models.executions.metrics.Counter.of("solved", 1));
+        try (HttpClient client = buildHttpClient(runContext)) {
+            String jobId = submit(client, collectionUrl, conn.apiKey(), datasetBody, logger);
+            logger.info("Submitted dataset to Timefold model '{}', job id: {}", conn.model().modelId(), jobId);
 
             return Output.builder()
                 .jobId(jobId)
-                .solverStatus(solverStatus)
-                .score(score)
-                .modelOutput(modelOutput == null || modelOutput.isNull()
-                    ? null
-                    : MAPPER.convertValue(modelOutput, Object.class))
                 .build();
         }
     }
@@ -244,78 +178,6 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         return responseBody.trim().replaceAll("^\"|\"$", "");
     }
 
-    private JsonNode pollUntilComplete(HttpClient client,
-                                       String collectionUrl,
-                                       String jobId,
-                                       String apiKey,
-                                       Duration pollInterval,
-                                       Duration requestTimeout,
-                                       Duration solveDuration,
-                                       Logger logger) throws Exception {
-        String metadataUrl = collectionUrl + "/" + jobId + "/metadata";
-        long deadline = System.nanoTime() + requestTimeout.toNanos();
-        // Once the solver has been running longer than solveDuration plus a grace period,
-        // proactively ask Timefold to terminate and return the best solution found.
-        long terminateAfter = System.nanoTime() + solveDuration.plusSeconds(10).toNanos();
-        boolean terminationRequested = false;
-
-        while (true) {
-            JsonNode metadata = httpGet(client, metadataUrl, apiKey);
-            String status = text(metadata, "solverStatus");
-
-            if (status == null || !RUNNING_STATUSES.contains(status)) {
-                // SOLVING_COMPLETED, SOLVING_FAILED, TERMINATED, etc.
-                if ("SOLVING_FAILED".equals(status)) {
-                    throw new IllegalStateException(
-                        "Timefold solving failed for job " + jobId + ": " + metadata.toString()
-                    );
-                }
-                return metadata;
-            }
-
-            if (System.nanoTime() > deadline) {
-                throw new IllegalStateException(
-                    "Timed out after " + requestTimeout + " waiting for Timefold job " + jobId +
-                        " to complete (last status: " + status + ")"
-                );
-            }
-
-            if (!terminationRequested && System.nanoTime() > terminateAfter) {
-                logger.info("solveDuration elapsed; requesting early termination for job {}", jobId);
-                terminate(client, collectionUrl, jobId, apiKey);
-                terminationRequested = true;
-            }
-
-            Thread.sleep(pollInterval.toMillis());
-        }
-    }
-
-    private void terminate(HttpClient client, String collectionUrl, String jobId, String apiKey) {
-        try {
-            HttpRequest request = baseRequest(collectionUrl + "/" + jobId, apiKey)
-                .method("DELETE")
-                .build();
-            client.request(request, String.class);
-        } catch (Exception e) {
-            // Best-effort: solving will still end on its own spentLimit.
-        }
-    }
-
-    private JsonNode httpGet(HttpClient client, String url, String apiKey) throws Exception {
-        HttpRequest request = baseRequest(url, apiKey)
-            .method("GET")
-            .build();
-        HttpResponse<String> response = client.request(request, String.class);
-        return MAPPER.readTree(response.getBody());
-    }
-
-    private HttpRequest.HttpRequestBuilder baseRequest(String url, String apiKey) {
-        return HttpRequest.builder()
-            .uri(URI.create(url))
-            .addHeader("X-API-KEY", apiKey)
-            .addHeader("Accept", "application/json");
-    }
-
     private JsonNode toJsonNode(Object value) {
         if (value instanceof String str) {
             JsonNode parsed = tryParse(str);
@@ -334,18 +196,6 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         }
     }
 
-    private static String text(JsonNode node, String field) {
-        JsonNode value = node == null ? null : node.get(field);
-        return value == null || value.isNull() ? null : value.asText();
-    }
-
-    private static String stripTrailingSlash(String url) {
-        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
-    }
-
-    /**
-     * Formats a {@link Duration} as an ISO-8601 string Timefold accepts, e.g. {@code PT30S}.
-     */
     private static String formatDuration(Duration duration) {
         return duration.toString();
     }
@@ -354,26 +204,10 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
     @Getter
     public static class Output implements io.kestra.core.models.tasks.Output {
         @Schema(
-            title = "The optimized solution (`modelOutput`)",
-            description = "The `modelOutput` object returned by the Timefold Platform, containing the " +
-                "optimized assignments (routes, schedules, etc.) for the selected model."
-        )
-        private final Object modelOutput;
-
-        @Schema(
             title = "The identifier of the solving job on the Timefold Platform",
-            description = "Can be used to retrieve or terminate the job via the Timefold API."
+            description = "Pass this to a subsequent task to poll for status or retrieve the solution " +
+                "via the Timefold API."
         )
         private final String jobId;
-
-        @Schema(
-            title = "The final solver status, e.g. `SOLVING_COMPLETED` or `TERMINATED`"
-        )
-        private final String solverStatus;
-
-        @Schema(
-            title = "The score of the returned solution, e.g. `0hard/0medium/-3603soft`"
-        )
-        private final String score;
     }
 }
