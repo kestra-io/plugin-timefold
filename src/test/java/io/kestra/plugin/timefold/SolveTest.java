@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @KestraTest
 @WireMockTest
-class SolveTaskTest {
+class SolveTest {
 
     @Inject
     private RunContextFactory runContextFactory;
@@ -45,18 +45,9 @@ class SolveTaskTest {
                 {"modelOutput":{"routes":[{"vehicleId":"Ann","visits":[]}]}}
                 """)));
 
-        SolveTask task = SolveTask.builder()
-            .apiKey(Property.ofValue("test-api-key"))
-            .model(Property.ofValue(TimefoldModel.FIELD_SERVICE_ROUTING))
-            .baseUrl(Property.ofValue("http://localhost:" + wm.getHttpPort()))
-            .modelInput(Property.ofValue(Map.of(
-                "vehicles", List.of(Map.of("id", "Ann")),
-                "visits", List.of()
-            )))
-            .pollInterval(Property.ofValue(Duration.ofMillis(10)))
-            .build();
+        Solve task = testTask(wm).build();
 
-        SolveTask.Output output = task.run(runContextFactory.of());
+        Solve.Output output = task.run(runContextFactory.of());
 
         assertThat(output.getJobId(), is(JOB_ID));
         assertThat(output.getSolverStatus(), is("SOLVING_COMPLETED"));
@@ -65,6 +56,18 @@ class SolveTaskTest {
 
         verify(postRequestedFor(urlEqualTo(collectionPath))
             .withHeader("X-API-KEY", equalTo("test-api-key")));
+    }
+
+    private static Solve.SolveBuilder<?, ?> testTask(WireMockRuntimeInfo wm) {
+        return Solve.builder()
+            .apiKey(Property.ofValue("test-api-key"))
+            .model(Property.ofValue(TimefoldModel.FIELD_SERVICE_ROUTING))
+            .baseUrl(Property.ofValue("http://localhost:" + wm.getHttpPort()))
+            .modelInput(Map.of(
+                "vehicles", List.of(Map.of("id", "Ann")),
+                "visits", List.of()
+            ))
+            .pollInterval(Property.ofValue(Duration.ofMillis(10)));
     }
 
     @Test
@@ -95,15 +98,11 @@ class SolveTaskTest {
                 {"modelOutput":{"shifts":[]}}
                 """)));
 
-        SolveTask task = SolveTask.builder()
-            .apiKey(Property.ofValue("test-api-key"))
+        Solve task = testTask(wm)
             .model(Property.ofValue(TimefoldModel.EMPLOYEE_SCHEDULING))
-            .baseUrl(Property.ofValue("http://localhost:" + wm.getHttpPort()))
-            .modelInput(Property.ofValue(Map.of("employees", List.of(), "shifts", List.of())))
-            .pollInterval(Property.ofValue(Duration.ofMillis(10)))
             .build();
 
-        SolveTask.Output output = task.run(runContextFactory.of());
+        Solve.Output output = task.run(runContextFactory.of());
 
         assertThat(output.getSolverStatus(), is("SOLVING_COMPLETED"));
         assertThat(output.getScore(), is("0hard/0soft"));
@@ -124,13 +123,7 @@ class SolveTaskTest {
                 {"solverStatus":"SOLVING_FAILED","score":null}
                 """)));
 
-        SolveTask task = SolveTask.builder()
-            .apiKey(Property.ofValue("test-api-key"))
-            .model(Property.ofValue(TimefoldModel.FIELD_SERVICE_ROUTING))
-            .baseUrl(Property.ofValue("http://localhost:" + wm.getHttpPort()))
-            .modelInput(Property.ofValue(Map.of("vehicles", List.of(), "visits", List.of())))
-            .pollInterval(Property.ofValue(Duration.ofMillis(10)))
-            .build();
+        Solve task = testTask(wm).build();
 
         assertThrows(IllegalStateException.class, () -> task.run(runContextFactory.of()));
     }

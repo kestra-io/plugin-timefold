@@ -10,6 +10,7 @@ import io.kestra.core.http.client.configurations.HttpConfiguration;
 import io.kestra.core.http.client.configurations.TimeoutConfiguration;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
+import io.kestra.core.models.property.Data;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.runners.RunContext;
@@ -89,7 +90,7 @@ import java.util.Set;
         )
     }
 )
-public class SolveTask extends AbstractTimefoldTask implements RunnableTask<SolveTask.Output> {
+public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Output> {
     private static final ObjectMapper MAPPER = JacksonMapper.ofJson();
     private static final Set<String> RUNNING_STATUSES = Set.of(
         "SOLVING_SCHEDULED", "SOLVING_ACTIVE", "NOT_SOLVING"
@@ -104,7 +105,7 @@ public class SolveTask extends AbstractTimefoldTask implements RunnableTask<Solv
             "`{ \"modelInput\": ... }` request body sent to Timefold."
     )
     @NotNull
-    private Property<Object> modelInput;
+    private Object modelInput;
 
     @Schema(
         title = "Maximum time Timefold should spend solving before returning the best solution found",
@@ -143,22 +144,22 @@ public class SolveTask extends AbstractTimefoldTask implements RunnableTask<Solv
     public Output run(RunContext runContext) throws Exception {
         Logger logger = runContext.logger();
 
-        String renderedApiKey = runContext.render(this.apiKey).as(String.class).orElseThrow();
-        TimefoldModel renderedModel = runContext.render(this.model).as(TimefoldModel.class).orElseThrow();
-        String renderedBaseUrl = runContext.render(this.baseUrl).as(String.class).orElseThrow();
-        Duration renderedSolveDuration = runContext.render(this.solveDuration).as(Duration.class).orElseThrow();
-        Duration renderedPollInterval = runContext.render(this.pollInterval).as(Duration.class).orElseThrow();
-        Duration renderedRequestTimeout = runContext.render(this.requestTimeout).as(Duration.class).orElseThrow();
-        String renderedRunName = runContext.render(this.runName).as(String.class).orElse(null);
+        String rApiKey = runContext.render(this.apiKey).as(String.class).orElseThrow();
+        TimefoldModel rModel = runContext.render(this.model).as(TimefoldModel.class).orElseThrow();
+        String rBaseUrl = runContext.render(this.baseUrl).as(String.class).orElse("https://app.timefold.ai");
+        Duration rSolveDuration = runContext.render(this.solveDuration).as(Duration.class).orElseThrow();
+        Duration rPollInterval = runContext.render(this.pollInterval).as(Duration.class).orElseThrow();
+        Duration rRequestTimeout = runContext.render(this.requestTimeout).as(Duration.class).orElseThrow();
+        String rRunName = runContext.render(this.runName).as(String.class).orElse(null);
 
         String collectionUrl = String.format(
             "%s/api/models/%s/v1/%s",
-            stripTrailingSlash(renderedBaseUrl),
-            renderedModel.modelId(),
-            renderedModel.resource()
+            stripTrailingSlash(rBaseUrl),
+            rModel.modelId(),
+            rModel.resource()
         );
 
-        JsonNode datasetBody = buildDataset(runContext, renderedSolveDuration, renderedRunName);
+        JsonNode datasetBody = buildDataset(runContext, rSolveDuration, rRunName);
 
         HttpConfiguration configuration = HttpConfiguration.builder()
             .timeout(TimeoutConfiguration.builder()
@@ -173,13 +174,13 @@ public class SolveTask extends AbstractTimefoldTask implements RunnableTask<Solv
             .build()) {
 
             // 1. Submit the dataset.
-            String jobId = submit(client, collectionUrl, renderedApiKey, datasetBody, logger);
-            logger.info("Submitted dataset to Timefold model '{}', job id: {}", renderedModel.modelId(), jobId);
+            String jobId = submit(client, collectionUrl, rApiKey, datasetBody, logger);
+            logger.info("Submitted dataset to Timefold model '{}', job id: {}", rModel.modelId(), jobId);
 
             // 2. Poll the metadata endpoint until the solver completes.
             JsonNode metadata = pollUntilComplete(
-                client, collectionUrl, jobId, renderedApiKey,
-                renderedPollInterval, renderedRequestTimeout, renderedSolveDuration,
+                client, collectionUrl, jobId, rApiKey,
+                rPollInterval, rRequestTimeout, rSolveDuration,
                 logger
             );
 
@@ -188,7 +189,7 @@ public class SolveTask extends AbstractTimefoldTask implements RunnableTask<Solv
             logger.info("Solving finished with status '{}' and score '{}'", solverStatus, score);
 
             // 3. Fetch the full solution.
-            JsonNode solution = httpGet(client, collectionUrl + "/" + jobId, renderedApiKey);
+            JsonNode solution = httpGet(client, collectionUrl + "/" + jobId, rApiKey);
             JsonNode modelOutput = solution.get("modelOutput");
 
             runContext.metric(io.kestra.core.models.executions.metrics.Counter.of("solved", 1));
@@ -215,9 +216,9 @@ public class SolveTask extends AbstractTimefoldTask implements RunnableTask<Solv
         }
         run.putObject("termination").put("spentLimit", formatDuration(solveDuration));
 
-        // modelInput, rendered from whatever the user provided (map / json string / expression).
-        Object renderedInput = runContext.render(this.modelInput).as(Object.class).orElseThrow();
-        dataset.set("modelInput", toJsonNode(renderedInput));
+        // modelInput, r from whatever the user provided (map / json string / expression).
+        var rInput = Data.from(this.modelInput).read(runContext).blockFirst();
+        dataset.set("modelInput", toJsonNode(rInput));
 
         return dataset;
     }
