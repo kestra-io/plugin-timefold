@@ -8,8 +8,10 @@ import io.kestra.core.http.HttpResponse;
 import io.kestra.core.http.client.HttpClient;
 import io.kestra.core.exceptions.KilledException;
 import io.kestra.core.models.annotations.Example;
+import io.kestra.core.models.annotations.Metric;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
+import io.kestra.core.models.executions.metrics.Counter;
 import io.kestra.core.models.property.Data;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
@@ -125,6 +127,9 @@ import java.util.concurrent.atomic.AtomicReference;
                     message: "Solved {{ outputs.solve.jobId }} — status: {{ outputs.solve.solverStatus }}, score: {{ outputs.solve.score }}"
                 """
         )
+    },
+    metrics = {
+        @Metric(name = "solved", type = Counter.TYPE)
     }
 )
 public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Output> {
@@ -253,7 +258,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
             JsonNode solution = httpGet(client, collectionUrl + "/" + jobId, conn.apiKey());
             JsonNode modelOutput = solution.get("modelOutput");
 
-            runContext.metric(io.kestra.core.models.executions.metrics.Counter.of("solved", 1));
+            runContext.metric(Counter.of("solved", 1));
 
             return Output.builder()
                 .jobId(jobId)
