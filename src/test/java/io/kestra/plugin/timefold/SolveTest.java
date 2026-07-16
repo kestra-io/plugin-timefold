@@ -83,6 +83,33 @@ class SolveTest {
         assertThat(resolved, is(TimefoldModel.EMPLOYEE_SCHEDULING));
     }
 
+    @Test
+    void waitTrueReturnsFullSolution(WireMockRuntimeInfo wm) throws Exception {
+        String collectionPath = "/api/models/field-service-routing/v1/route-plans";
+
+        stubFor(post(urlEqualTo(collectionPath))
+            .willReturn(okJson("\"" + JOB_ID + "\"")));
+
+        stubFor(get(urlEqualTo(collectionPath + "/" + JOB_ID + "/metadata"))
+            .willReturn(okJson("{\"solverStatus\":\"SOLVING_COMPLETED\",\"score\":\"0hard/-5soft\"}")));
+
+        stubFor(get(urlEqualTo(collectionPath + "/" + JOB_ID))
+            .willReturn(okJson("{\"solverStatus\":\"SOLVING_COMPLETED\",\"score\":\"0hard/-5soft\"," +
+                "\"modelOutput\":{\"routes\":[]}}")));
+
+        Solve task = testTask(wm)
+            .wait(Property.ofValue(true))
+            .pollInterval(Property.ofValue(java.time.Duration.ofMillis(50)))
+            .build();
+
+        Solve.Output output = task.run(runContextFactory.of());
+
+        assertThat(output.getJobId(), is(JOB_ID));
+        assertThat(output.getSolverStatus(), is("SOLVING_COMPLETED"));
+        assertThat(output.getScore(), is("0hard/-5soft"));
+        assertThat(output.getModelOutput(), notNullValue());
+    }
+
     private static Solve.SolveBuilder<?, ?> testTask(WireMockRuntimeInfo wm) {
         return Solve.builder()
             .apiKey(Property.ofValue("test-api-key"))
