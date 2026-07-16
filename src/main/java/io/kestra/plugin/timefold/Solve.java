@@ -149,6 +149,8 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
     @Getter(AccessLevel.NONE)
     private transient volatile Thread runThread;
     @Getter(AccessLevel.NONE)
+    private transient volatile Logger killLogger;
+    @Getter(AccessLevel.NONE)
     private transient volatile String killCollectionUrl;
     @Getter(AccessLevel.NONE)
     private transient volatile String killApiKey;
@@ -220,6 +222,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         killRequested = new AtomicBoolean(false);
         runThread = Thread.currentThread();
         Logger logger = runContext.logger();
+        killLogger = logger;
 
         Connection conn = renderConnection(runContext);
         Duration rSolveDuration = runContext.render(this.solveDuration).as(Duration.class).orElseThrow();
@@ -349,7 +352,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
 
             if (!terminationRequested && System.nanoTime() > terminateAfter) {
                 logger.info("solveDuration elapsed; requesting early termination for job {}", jobId);
-                terminate(client, collectionUrl, jobId, apiKey);
+                terminate(client, collectionUrl, jobId, apiKey, logger);
                 terminationRequested = true;
             }
 
@@ -362,14 +365,14 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         }
     }
 
-    private void terminate(HttpClient client, String collectionUrl, String jobId, String apiKey) {
+    private void terminate(HttpClient client, String collectionUrl, String jobId, String apiKey, Logger logger) {
         try {
             HttpRequest request = baseRequest(collectionUrl + "/" + jobId, apiKey)
                 .method("DELETE")
                 .build();
             client.request(request, String.class);
         } catch (Exception e) {
-            // Best-effort: solving will still end on its own spentLimit.
+            logger.warn("Failed to request early termination for job {} — solving will end on its own spentLimit: {}", jobId, e.getMessage());
         }
     }
 
@@ -402,7 +405,10 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
                 .build();
             client.send(request, java.net.http.HttpResponse.BodyHandlers.discarding());
         } catch (Exception e) {
-            // Best-effort: never let kill() throw.
+            Logger logger = killLogger;
+            if (logger != null) {
+                logger.warn("Failed to cancel job {} on the Timefold Platform: {}", jobId, e.getMessage());
+            }
         }
     }
 
