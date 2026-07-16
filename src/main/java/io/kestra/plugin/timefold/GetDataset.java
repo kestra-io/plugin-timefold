@@ -22,6 +22,9 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 import org.slf4j.Logger;
 
+import java.io.ByteArrayInputStream;
+import java.net.URI;
+
 @SuperBuilder
 @ToString
 @EqualsAndHashCode
@@ -110,8 +113,15 @@ public class GetDataset extends AbstractTimefoldTask implements RunnableTask<Get
                 .score(score)
                 .modelOutput(modelOutput == null || modelOutput.isNull()
                     ? null
-                    : MAPPER.convertValue(modelOutput, Object.class))
+                    : storeModelOutput(runContext, modelOutput))
                 .build();
+        }
+    }
+
+    private URI storeModelOutput(RunContext runContext, JsonNode modelOutput) throws Exception {
+        byte[] json = MAPPER.writeValueAsBytes(modelOutput);
+        try (var is = new ByteArrayInputStream(json)) {
+            return runContext.storage().putFile(is, "modelOutput.json");
         }
     }
 
@@ -124,11 +134,11 @@ public class GetDataset extends AbstractTimefoldTask implements RunnableTask<Get
     @Getter
     public static class Output implements io.kestra.core.models.tasks.Output {
         @Schema(
-            title = "The optimized solution (`modelOutput`)",
-            description = "The `modelOutput` object returned by the Timefold Platform, containing the " +
-                "optimized assignments (routes, schedules, etc.) for the selected model."
+            title = "URI to the stored `modelOutput`",
+            description = "Points to the `modelOutput` JSON file written to Kestra's internal storage. " +
+                "Pass this URI to downstream tasks (e.g. `{{ outputs.get_result.modelOutput }}`)."
         )
-        private final Object modelOutput;
+        private final URI modelOutput;
 
         @Schema(
             title = "The identifier of the solving job on the Timefold Platform"

@@ -28,6 +28,8 @@ import lombok.ToString;
 import lombok.experimental.SuperBuilder;
 import org.slf4j.Logger;
 
+import java.io.ByteArrayInputStream;
+import java.net.URI;
 import java.time.Duration;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -272,7 +274,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
                 .score(score)
                 .modelOutput(modelOutput == null || modelOutput.isNull()
                     ? null
-                    : MAPPER.convertValue(modelOutput, Object.class))
+                    : storeModelOutput(runContext, modelOutput))
                 .build();
         }
     }
@@ -415,6 +417,13 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         }
     }
 
+    private URI storeModelOutput(RunContext runContext, JsonNode modelOutput) throws Exception {
+        byte[] json = MAPPER.writeValueAsBytes(modelOutput);
+        try (var is = new ByteArrayInputStream(json)) {
+            return runContext.storage().putFile(is, "modelOutput.json");
+        }
+    }
+
     private JsonNode httpGet(HttpClient client, String url, String apiKey) throws Exception {
         HttpRequest request = baseRequest(url, apiKey)
             .method("GET")
@@ -461,11 +470,11 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         private final String jobId;
 
         @Schema(
-            title = "The optimized solution (`modelOutput`)",
-            description = "Populated only when `wait` is `true`. The `modelOutput` object returned by " +
-                "the Timefold Platform containing the optimized assignments (routes, schedules, etc.)."
+            title = "URI to the stored `modelOutput`",
+            description = "Populated only when `wait` is `true`. Points to the `modelOutput` JSON file " +
+                "written to Kestra's internal storage. Pass this URI to downstream tasks (e.g. `{{ outputs.solve.modelOutput }}`)."
         )
-        private final Object modelOutput;
+        private final URI modelOutput;
 
         @Schema(
             title = "The final solver status, e.g. `SOLVING_COMPLETED` or `TERMINATED`",
