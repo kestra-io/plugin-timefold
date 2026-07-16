@@ -198,7 +198,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
 
     @Schema(
         title = "How often to poll the Timefold Platform for the solver status",
-        description = "Only applies when `wait` is `true`. Defaults to `PT2S` (every 2 seconds)."
+        description = "Only applies when `wait` is `true`. Minimum is `PT0.5S` (500 ms). Defaults to `PT2S` (every 2 seconds)."
     )
     @PluginProperty(group = "execution")
     @NotNull
@@ -246,6 +246,9 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
             }
 
             Duration rPollInterval = runContext.render(this.pollInterval).as(Duration.class).orElseThrow();
+            if (rPollInterval.compareTo(Duration.ofMillis(500)) < 0) {
+                throw new IllegalArgumentException("pollInterval must be at least PT0.5S (500 ms), got: " + rPollInterval);
+            }
             Duration rRequestTimeout = runContext.render(this.requestTimeout).as(Duration.class).orElseThrow();
 
             JsonNode metadata = pollUntilComplete(
