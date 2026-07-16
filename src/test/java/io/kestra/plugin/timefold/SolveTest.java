@@ -3,6 +3,7 @@ package io.kestra.plugin.timefold;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
+import io.kestra.core.exceptions.KilledException;
 import io.kestra.core.junit.annotations.KestraTest;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.runners.RunContextFactory;
@@ -10,12 +11,15 @@ import io.kestra.core.serializers.JacksonMapper;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @KestraTest
 @WireMockTest
@@ -108,6 +112,44 @@ class SolveTest {
         assertThat(output.getSolverStatus(), is("SOLVING_COMPLETED"));
         assertThat(output.getScore(), is("0hard/-5soft"));
         assertThat(output.getModelOutput(), notNullValue());
+    }
+
+    @Test
+    void killCancelsRemoteJobAndThrows(WireMockRuntimeInfo wm) throws Exception {
+        String collectionPath = "/api/models/field-service-routing/v1/route-plans";
+
+        stubFor(post(urlEqualTo(collectionPath))
+            .willReturn(okJson("\"" + JOB_ID + "\"")));
+
+        // Metadata always returns SOLVING_ACTIVE so the poll loop never exits on its own.
+        stubFor(get(urlEqualTo(collectionPath + "/" + JOB_ID + "/metadata"))
+            .willReturn(okJson("{\"solverStatus\":\"SOLVING_ACTIVE\"}")));
+
+        stubFor(delete(urlEqualTo(collectionPath + "/" + JOB_ID))
+            .willReturn(aResponse().withStatus(200)));
+
+        Solve task = testTask(wm)
+            .wait(Property.ofValue(true))
+            .pollInterval(Property.ofValue(Duration.ofMillis(50)))
+            .requestTimeout(Property.ofValue(Duration.ofMinutes(10)))
+            .build();
+
+        CompletableFuture<Exception> result = CompletableFuture.supplyAsync(() -> {
+            try {
+                task.run(runContextFactory.of());
+                return null;
+            } catch (Exception e) {
+                return e;
+            }
+        });
+
+        // Wait until the job has been submitted and the poll loop is sleeping.
+        Thread.sleep(200);
+        task.kill();
+
+        Exception thrown = result.get();
+        assertThat(thrown, instanceOf(KilledException.class));
+        verify(deleteRequestedFor(urlEqualTo(collectionPath + "/" + JOB_ID)));
     }
 
     private static Solve.SolveBuilder<?, ?> testTask(WireMockRuntimeInfo wm) {

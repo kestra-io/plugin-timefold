@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.kestra.core.http.HttpRequest;
 import io.kestra.core.http.HttpResponse;
 import io.kestra.core.http.client.HttpClient;
+import io.kestra.core.exceptions.KilledException;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.property.Data;
@@ -15,6 +16,7 @@ import io.kestra.core.runners.RunContext;
 import io.kestra.core.serializers.JacksonMapper;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
+import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -25,6 +27,8 @@ import org.slf4j.Logger;
 
 import java.time.Duration;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 @SuperBuilder
 @ToString
@@ -128,6 +132,21 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         "SOLVING_SCHEDULED", "SOLVING_ACTIVE", "NOT_SOLVING"
     );
 
+    // Runtime state for kill() — transient so Lombok/Jackson ignore them for serialization,
+    // equals, hashCode, and toString. NOT initialized inline: @SuperBuilder replaces field
+    // initializers with a generated $default$ method that @NoArgsConstructor never calls,
+    // leaving them null. They are initialized at the top of run() instead.
+    @Getter(AccessLevel.NONE)
+    private transient AtomicReference<String> activeJobId;
+    @Getter(AccessLevel.NONE)
+    private transient AtomicBoolean killRequested;
+    @Getter(AccessLevel.NONE)
+    private transient volatile Thread runThread;
+    @Getter(AccessLevel.NONE)
+    private transient volatile String killCollectionUrl;
+    @Getter(AccessLevel.NONE)
+    private transient volatile String killApiKey;
+
     @Schema(
         title = "The optimization input dataset (`modelInput`)",
         description = "The data to be optimized, following the selected model's schema. " +
@@ -185,6 +204,9 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
 
     @Override
     public Output run(RunContext runContext) throws Exception {
+        activeJobId = new AtomicReference<>();
+        killRequested = new AtomicBoolean(false);
+        runThread = Thread.currentThread();
         Logger logger = runContext.logger();
 
         Connection conn = renderConnection(runContext);
@@ -193,10 +215,13 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         boolean rWait = runContext.render(this.wait).as(Boolean.class).orElse(false);
 
         String collectionUrl = collectionUrl(conn.baseUrl(), conn.model());
+        killCollectionUrl = collectionUrl;
+        killApiKey = conn.apiKey();
         JsonNode datasetBody = buildDataset(runContext, rSolveDuration, rRunName);
 
         try (HttpClient client = buildHttpClient(runContext)) {
             String jobId = submit(client, collectionUrl, conn.apiKey(), datasetBody, logger);
+            activeJobId.set(jobId);
             logger.info("Submitted dataset to Timefold model '{}', job id: {}", conn.model().modelId(), jobId);
 
             if (!rWait) {
@@ -287,6 +312,10 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         boolean terminationRequested = false;
 
         while (true) {
+            if (killRequested.get()) {
+                throw new KilledException();
+            }
+
             JsonNode metadata = httpGet(client, metadataUrl, apiKey);
             String status = text(metadata, "solverStatus");
 
@@ -312,7 +341,12 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
                 terminationRequested = true;
             }
 
-            Thread.sleep(pollInterval.toMillis());
+            try {
+                Thread.sleep(pollInterval.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new KilledException();
+            }
         }
     }
 
@@ -324,6 +358,39 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
             client.request(request, String.class);
         } catch (Exception e) {
             // Best-effort: solving will still end on its own spentLimit.
+        }
+    }
+
+    @Override
+    public void kill() {
+        AtomicBoolean killed = killRequested;
+        if (killed == null || !killed.compareAndSet(false, true)) {
+            return; // duplicate signal or run() not started yet — ignore
+        }
+        Thread thread = runThread;
+        if (thread != null) {
+            thread.interrupt(); // wake the poll loop immediately
+        }
+        String jobId = activeJobId != null ? activeJobId.get() : null;
+        String collectionUrl = killCollectionUrl;
+        String apiKey = killApiKey;
+        if (jobId == null || collectionUrl == null || apiKey == null) {
+            return; // job was never submitted; nothing to cancel on the platform
+        }
+        // Use JDK's HttpClient rather than the Kestra one: thread.interrupt() above may have
+        // already caused run() to exit its try-with-resources block and close the Kestra client,
+        // creating a race. A fresh JDK client is independent of that lifecycle.
+        try {
+            java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create(collectionUrl + "/" + jobId))
+                .header("X-API-KEY", apiKey)
+                .header("Accept", "application/json")
+                .DELETE()
+                .build();
+            client.send(request, java.net.http.HttpResponse.BodyHandlers.discarding());
+        } catch (Exception e) {
+            // Best-effort: never let kill() throw.
         }
     }
 
