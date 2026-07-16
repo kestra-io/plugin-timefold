@@ -15,6 +15,7 @@ import io.kestra.core.models.executions.metrics.Counter;
 import io.kestra.core.models.property.Data;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
+import io.kestra.core.models.tasks.common.FetchType;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.serializers.JacksonMapper;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -218,6 +219,19 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
     @Builder.Default
     private Property<Duration> requestTimeout = Property.ofValue(Duration.ofMinutes(10));
 
+    @Schema(
+        title = "How to return the `modelOutput`",
+        description = "Only applies when `wait` is `true`.\n\n" +
+            "- `STORE` (default): writes `modelOutput` as a JSON file to Kestra's internal storage " +
+            "and returns its URI in `uri`. Recommended for large solutions.\n" +
+            "- `FETCH` / `FETCH_ONE`: returns `modelOutput` inline in the `modelOutput` output field.\n" +
+            "- `NONE`: discards `modelOutput` entirely (useful when only `solverStatus` and `score` are needed)."
+    )
+    @PluginProperty(group = "execution")
+    @NotNull
+    @Builder.Default
+    private Property<FetchType> fetchType = Property.ofValue(FetchType.STORE);
+
     @Override
     public Output run(RunContext runContext) throws Exception {
         activeJobId = new AtomicReference<>();
@@ -265,17 +279,24 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
 
             JsonNode solution = httpGet(client, collectionUrl + "/" + jobId, conn.apiKey());
             JsonNode modelOutput = solution.get("modelOutput");
+            FetchType rFetchType = runContext.render(this.fetchType).as(FetchType.class).orElse(FetchType.STORE);
 
             runContext.metric(Counter.of("solved", 1));
 
-            return Output.builder()
+            Output.OutputBuilder outputBuilder = Output.builder()
                 .jobId(jobId)
                 .solverStatus(solverStatus)
-                .score(score)
-                .modelOutput(modelOutput == null || modelOutput.isNull()
-                    ? null
-                    : storeModelOutput(runContext, modelOutput))
-                .build();
+                .score(score);
+
+            if (modelOutput != null && !modelOutput.isNull()) {
+                switch (rFetchType) {
+                    case STORE -> outputBuilder.uri(storeModelOutput(runContext, modelOutput));
+                    case FETCH, FETCH_ONE -> outputBuilder.modelOutput(MAPPER.convertValue(modelOutput, Object.class));
+                    case NONE -> { /* discard */ }
+                }
+            }
+
+            return outputBuilder.build();
         }
     }
 
@@ -417,8 +438,8 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         }
     }
 
-    private URI storeModelOutput(RunContext runContext, JsonNode modelOutput) throws Exception {
-        byte[] json = MAPPER.writeValueAsBytes(modelOutput);
+    private URI storeModelOutput(RunContext runContext, JsonNode node) throws Exception {
+        byte[] json = MAPPER.writeValueAsBytes(node);
         try (var is = new ByteArrayInputStream(json)) {
             return runContext.storage().putFile(is, "modelOutput.json");
         }
@@ -470,11 +491,19 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         private final String jobId;
 
         @Schema(
-            title = "URI to the stored `modelOutput`",
-            description = "Populated only when `wait` is `true`. Points to the `modelOutput` JSON file " +
-                "written to Kestra's internal storage. Pass this URI to downstream tasks (e.g. `{{ outputs.solve.modelOutput }}`)."
+            title = "URI to the stored `modelOutput` (populated when `fetchType` is `STORE`)",
+            description = "Populated only when `wait` is `true` and `fetchType` is `STORE` (the default). " +
+                "Points to the `modelOutput` JSON file written to Kestra's internal storage."
         )
-        private final URI modelOutput;
+        private final URI uri;
+
+        @Schema(
+            title = "The optimized solution (`modelOutput`) returned inline (populated when `fetchType` is `FETCH` or `FETCH_ONE`)",
+            description = "Populated only when `wait` is `true` and `fetchType` is `FETCH` or `FETCH_ONE`. " +
+                "The `modelOutput` object returned by the Timefold Platform containing the optimized " +
+                "assignments (routes, schedules, etc.)."
+        )
+        private final Object modelOutput;
 
         @Schema(
             title = "The final solver status, e.g. `SOLVING_COMPLETED` or `TERMINATED`",

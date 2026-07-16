@@ -41,10 +41,34 @@ class GetDatasetTest {
         assertThat(output.getJobId(), is(JOB_ID));
         assertThat(output.getSolverStatus(), is("SOLVING_COMPLETED"));
         assertThat(output.getScore(), is("0hard/-42soft"));
-        assertThat(output.getModelOutput(), notNullValue());
+        assertThat(output.getUri(), notNullValue());
+        assertThat(output.getModelOutput(), nullValue());
 
         verify(getRequestedFor(urlEqualTo(datasetPath))
             .withHeader("X-API-KEY", equalTo("test-api-key")));
+    }
+
+    @Test
+    void fetchReturnsModelOutputInline(WireMockRuntimeInfo wm) throws Exception {
+        String datasetPath = "/api/models/field-service-routing/v1/route-plans/" + JOB_ID;
+
+        stubFor(get(urlEqualTo(datasetPath))
+            .willReturn(okJson("""
+                {
+                  "solverStatus": "SOLVING_COMPLETED",
+                  "score": "0hard/-42soft",
+                  "modelOutput": {"routes": []}
+                }
+                """)));
+
+        GetDataset task = testTask(wm)
+            .fetchType(Property.ofValue(io.kestra.core.models.tasks.common.FetchType.FETCH))
+            .build();
+
+        GetDataset.Output output = task.run(runContextFactory.of());
+
+        assertThat(output.getModelOutput(), notNullValue());
+        assertThat(output.getUri(), nullValue());
     }
 
     @Test
@@ -62,6 +86,7 @@ class GetDatasetTest {
 
         assertThat(output.getSolverStatus(), is("SOLVING_ACTIVE"));
         assertThat(output.getScore(), nullValue());
+        assertThat(output.getUri(), nullValue());
         assertThat(output.getModelOutput(), nullValue());
     }
 

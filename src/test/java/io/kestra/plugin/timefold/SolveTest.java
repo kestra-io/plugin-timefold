@@ -85,7 +85,7 @@ class SolveTest {
     }
 
     @Test
-    void waitTrueReturnsFullSolution(WireMockRuntimeInfo wm) throws Exception {
+    void waitTrueStoresModelOutputByDefault(WireMockRuntimeInfo wm) throws Exception {
         stubFor(post(urlEqualTo(FSR_PATH))
             .willReturn(okJson("\"" + JOB_ID + "\"")));
 
@@ -106,7 +106,32 @@ class SolveTest {
         assertThat(output.getJobId(), is(JOB_ID));
         assertThat(output.getSolverStatus(), is("SOLVING_COMPLETED"));
         assertThat(output.getScore(), is("0hard/-5soft"));
+        assertThat(output.getUri(), notNullValue());
+        assertThat(output.getModelOutput(), nullValue());
+    }
+
+    @Test
+    void waitTrueFetchReturnsModelOutputInline(WireMockRuntimeInfo wm) throws Exception {
+        stubFor(post(urlEqualTo(FSR_PATH))
+            .willReturn(okJson("\"" + JOB_ID + "\"")));
+
+        stubFor(get(urlEqualTo(FSR_PATH + "/" + JOB_ID + "/metadata"))
+            .willReturn(okJson("{\"solverStatus\":\"SOLVING_COMPLETED\",\"score\":\"0hard/-5soft\"}")));
+
+        stubFor(get(urlEqualTo(FSR_PATH + "/" + JOB_ID))
+            .willReturn(okJson("{\"solverStatus\":\"SOLVING_COMPLETED\",\"score\":\"0hard/-5soft\"," +
+                "\"modelOutput\":{\"routes\":[]}}")));
+
+        Solve task = testTask(wm)
+            .wait(Property.ofValue(true))
+            .fetchType(Property.ofValue(io.kestra.core.models.tasks.common.FetchType.FETCH))
+            .pollInterval(Property.ofValue(Duration.ofMillis(500)))
+            .build();
+
+        Solve.Output output = task.run(runContextFactory.of());
+
         assertThat(output.getModelOutput(), notNullValue());
+        assertThat(output.getUri(), nullValue());
     }
 
     @Test

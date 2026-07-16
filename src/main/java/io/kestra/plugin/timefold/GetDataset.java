@@ -10,6 +10,7 @@ import io.kestra.core.models.annotations.Plugin;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
+import io.kestra.core.models.tasks.common.FetchType;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.serializers.JacksonMapper;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -85,6 +86,18 @@ public class GetDataset extends AbstractTimefoldTask implements RunnableTask<Get
     @NotNull
     private Property<String> jobId;
 
+    @Schema(
+        title = "How to return the `modelOutput`",
+        description = "- `STORE` (default): writes `modelOutput` as a JSON file to Kestra's internal storage " +
+            "and returns its URI in `uri`. Recommended for large solutions.\n" +
+            "- `FETCH` / `FETCH_ONE`: returns `modelOutput` inline in the `modelOutput` output field.\n" +
+            "- `NONE`: discards `modelOutput` entirely (useful when only `solverStatus` and `score` are needed)."
+    )
+    @PluginProperty(group = "execution")
+    @NotNull
+    @Builder.Default
+    private Property<FetchType> fetchType = Property.ofValue(FetchType.STORE);
+
     @Override
     public Output run(RunContext runContext) throws Exception {
         Logger logger = runContext.logger();
@@ -104,22 +117,29 @@ public class GetDataset extends AbstractTimefoldTask implements RunnableTask<Get
             JsonNode modelOutput = dataset.get("modelOutput");
             String solverStatus = text(dataset, "solverStatus");
             String score = text(dataset, "score");
+            FetchType rFetchType = runContext.render(this.fetchType).as(FetchType.class).orElse(FetchType.STORE);
 
             logger.info("Retrieved dataset with status '{}' and score '{}'", solverStatus, score);
 
-            return Output.builder()
+            Output.OutputBuilder outputBuilder = Output.builder()
                 .jobId(rJobId)
                 .solverStatus(solverStatus)
-                .score(score)
-                .modelOutput(modelOutput == null || modelOutput.isNull()
-                    ? null
-                    : storeModelOutput(runContext, modelOutput))
-                .build();
+                .score(score);
+
+            if (modelOutput != null && !modelOutput.isNull()) {
+                switch (rFetchType) {
+                    case STORE -> outputBuilder.uri(storeModelOutput(runContext, modelOutput));
+                    case FETCH, FETCH_ONE -> outputBuilder.modelOutput(MAPPER.convertValue(modelOutput, Object.class));
+                    case NONE -> { /* discard */ }
+                }
+            }
+
+            return outputBuilder.build();
         }
     }
 
-    private URI storeModelOutput(RunContext runContext, JsonNode modelOutput) throws Exception {
-        byte[] json = MAPPER.writeValueAsBytes(modelOutput);
+    private URI storeModelOutput(RunContext runContext, JsonNode node) throws Exception {
+        byte[] json = MAPPER.writeValueAsBytes(node);
         try (var is = new ByteArrayInputStream(json)) {
             return runContext.storage().putFile(is, "modelOutput.json");
         }
@@ -134,16 +154,23 @@ public class GetDataset extends AbstractTimefoldTask implements RunnableTask<Get
     @Getter
     public static class Output implements io.kestra.core.models.tasks.Output {
         @Schema(
-            title = "URI to the stored `modelOutput`",
-            description = "Points to the `modelOutput` JSON file written to Kestra's internal storage. " +
-                "Pass this URI to downstream tasks (e.g. `{{ outputs.get_result.modelOutput }}`)."
-        )
-        private final URI modelOutput;
-
-        @Schema(
             title = "The identifier of the solving job on the Timefold Platform"
         )
         private final String jobId;
+
+        @Schema(
+            title = "URI to the stored `modelOutput` (populated when `fetchType` is `STORE`)",
+            description = "Points to the `modelOutput` JSON file written to Kestra's internal storage. " +
+                "Populated when `fetchType` is `STORE` (the default)."
+        )
+        private final URI uri;
+
+        @Schema(
+            title = "The optimized solution (`modelOutput`) returned inline (populated when `fetchType` is `FETCH` or `FETCH_ONE`)",
+            description = "The `modelOutput` object returned by the Timefold Platform. " +
+                "Populated when `fetchType` is `FETCH` or `FETCH_ONE`."
+        )
+        private final Object modelOutput;
 
         @Schema(
             title = "The solver status at the time of retrieval, e.g. `SOLVING_COMPLETED` or `SOLVING_ACTIVE`"
