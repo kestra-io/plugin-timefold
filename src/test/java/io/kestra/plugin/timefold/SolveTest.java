@@ -29,12 +29,11 @@ class SolveTest {
     private RunContextFactory runContextFactory;
 
     private static final String JOB_ID = "job-abc-123";
+    private static final String FSR_PATH = "/api/models/field-service-routing/v1/route-plans";
 
     @Test
     void fieldServiceRoutingReturnsJobId(WireMockRuntimeInfo wm) throws Exception {
-        String collectionPath = "/api/models/field-service-routing/v1/route-plans";
-
-        stubFor(post(urlEqualTo(collectionPath))
+        stubFor(post(urlEqualTo(FSR_PATH))
             .willReturn(okJson("\"" + JOB_ID + "\"")));
 
         Solve task = testTask(wm).build();
@@ -42,7 +41,7 @@ class SolveTest {
         Solve.Output output = task.run(runContextFactory.of());
 
         assertThat(output.getJobId(), is(JOB_ID));
-        verify(postRequestedFor(urlEqualTo(collectionPath))
+        verify(postRequestedFor(urlEqualTo(FSR_PATH))
             .withHeader("X-API-KEY", equalTo("test-api-key")));
     }
 
@@ -65,9 +64,7 @@ class SolveTest {
 
     @Test
     void jobIdParsedFromJsonObject(WireMockRuntimeInfo wm) throws Exception {
-        String collectionPath = "/api/models/field-service-routing/v1/route-plans";
-
-        stubFor(post(urlEqualTo(collectionPath))
+        stubFor(post(urlEqualTo(FSR_PATH))
             .willReturn(okJson("{\"id\":\"" + JOB_ID + "\"}")));
 
         Solve task = testTask(wm).build();
@@ -89,21 +86,19 @@ class SolveTest {
 
     @Test
     void waitTrueReturnsFullSolution(WireMockRuntimeInfo wm) throws Exception {
-        String collectionPath = "/api/models/field-service-routing/v1/route-plans";
-
-        stubFor(post(urlEqualTo(collectionPath))
+        stubFor(post(urlEqualTo(FSR_PATH))
             .willReturn(okJson("\"" + JOB_ID + "\"")));
 
-        stubFor(get(urlEqualTo(collectionPath + "/" + JOB_ID + "/metadata"))
+        stubFor(get(urlEqualTo(FSR_PATH + "/" + JOB_ID + "/metadata"))
             .willReturn(okJson("{\"solverStatus\":\"SOLVING_COMPLETED\",\"score\":\"0hard/-5soft\"}")));
 
-        stubFor(get(urlEqualTo(collectionPath + "/" + JOB_ID))
+        stubFor(get(urlEqualTo(FSR_PATH + "/" + JOB_ID))
             .willReturn(okJson("{\"solverStatus\":\"SOLVING_COMPLETED\",\"score\":\"0hard/-5soft\"," +
                 "\"modelOutput\":{\"routes\":[]}}")));
 
         Solve task = testTask(wm)
             .wait(Property.ofValue(true))
-            .pollInterval(Property.ofValue(java.time.Duration.ofMillis(50)))
+            .pollInterval(Property.ofValue(Duration.ofMillis(500)))
             .build();
 
         Solve.Output output = task.run(runContextFactory.of());
@@ -116,21 +111,19 @@ class SolveTest {
 
     @Test
     void killCancelsRemoteJobAndThrows(WireMockRuntimeInfo wm) throws Exception {
-        String collectionPath = "/api/models/field-service-routing/v1/route-plans";
-
-        stubFor(post(urlEqualTo(collectionPath))
+        stubFor(post(urlEqualTo(FSR_PATH))
             .willReturn(okJson("\"" + JOB_ID + "\"")));
 
         // Metadata always returns SOLVING_ACTIVE so the poll loop never exits on its own.
-        stubFor(get(urlEqualTo(collectionPath + "/" + JOB_ID + "/metadata"))
+        stubFor(get(urlEqualTo(FSR_PATH + "/" + JOB_ID + "/metadata"))
             .willReturn(okJson("{\"solverStatus\":\"SOLVING_ACTIVE\"}")));
 
-        stubFor(delete(urlEqualTo(collectionPath + "/" + JOB_ID))
+        stubFor(delete(urlEqualTo(FSR_PATH + "/" + JOB_ID))
             .willReturn(aResponse().withStatus(200)));
 
         Solve task = testTask(wm)
             .wait(Property.ofValue(true))
-            .pollInterval(Property.ofValue(Duration.ofMillis(50)))
+            .pollInterval(Property.ofValue(Duration.ofMillis(500)))
             .requestTimeout(Property.ofValue(Duration.ofMinutes(10)))
             .build();
 
@@ -149,7 +142,56 @@ class SolveTest {
 
         Exception thrown = result.get();
         assertThat(thrown, instanceOf(KilledException.class));
-        verify(deleteRequestedFor(urlEqualTo(collectionPath + "/" + JOB_ID)));
+        verify(deleteRequestedFor(urlEqualTo(FSR_PATH + "/" + JOB_ID)));
+    }
+
+    @Test
+    void solvingFailedThrowsIllegalStateException(WireMockRuntimeInfo wm) {
+        stubFor(post(urlEqualTo(FSR_PATH))
+            .willReturn(okJson("\"" + JOB_ID + "\"")));
+
+        stubFor(get(urlEqualTo(FSR_PATH + "/" + JOB_ID + "/metadata"))
+            .willReturn(okJson("{\"solverStatus\":\"SOLVING_FAILED\",\"error\":\"constraint violation\"}")));
+
+        Solve task = testTask(wm)
+            .wait(Property.ofValue(true))
+            .pollInterval(Property.ofValue(Duration.ofMillis(500)))
+            .build();
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+            () -> task.run(runContextFactory.of()));
+        assertThat(ex.getMessage(), containsString(JOB_ID));
+        assertThat(ex.getMessage(), containsString("SOLVING_FAILED"));
+    }
+
+    @Test
+    void nonTwoxxResponseFromTimefoldThrowsException(WireMockRuntimeInfo wm) {
+        stubFor(post(urlEqualTo(FSR_PATH))
+            .willReturn(aResponse().withStatus(503).withBody("Service Unavailable")));
+
+        Solve task = testTask(wm).build();
+
+        assertThrows(Exception.class, () -> task.run(runContextFactory.of()));
+    }
+
+    @Test
+    void requestTimeoutExpiryThrowsIllegalStateException(WireMockRuntimeInfo wm) {
+        stubFor(post(urlEqualTo(FSR_PATH))
+            .willReturn(okJson("\"" + JOB_ID + "\"")));
+
+        stubFor(get(urlEqualTo(FSR_PATH + "/" + JOB_ID + "/metadata"))
+            .willReturn(okJson("{\"solverStatus\":\"SOLVING_ACTIVE\"}")));
+
+        Solve task = testTask(wm)
+            .wait(Property.ofValue(true))
+            .pollInterval(Property.ofValue(Duration.ofMillis(500)))
+            .requestTimeout(Property.ofValue(Duration.ofMillis(1)))
+            .build();
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+            () -> task.run(runContextFactory.of()));
+        assertThat(ex.getMessage(), containsString("Timed out"));
+        assertThat(ex.getMessage(), containsString(JOB_ID));
     }
 
     private static Solve.SolveBuilder<?, ?> testTask(WireMockRuntimeInfo wm) {
