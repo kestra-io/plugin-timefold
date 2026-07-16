@@ -45,6 +45,7 @@ abstract class AbstractTimefoldTask extends Task {
             "`FIELD_SERVICE_ROUTING` uses the `route-plans` endpoint and `EMPLOYEE_SCHEDULING` " +
             "uses the `schedules` endpoint."
     )
+    @PluginProperty(group = "connection")
     @NotNull
     protected Property<TimefoldModel> model;
 
@@ -54,6 +55,7 @@ abstract class AbstractTimefoldTask extends Task {
             "self-hosted Timefold deployment. The model and resource path segments are appended " +
             "automatically, so provide only the host, e.g. `https://app.timefold.ai`."
     )
+    @PluginProperty(group = "connection")
     @NotNull
     @lombok.Builder.Default
     protected Property<String> baseUrl = Property.ofValue("https://app.timefold.ai");

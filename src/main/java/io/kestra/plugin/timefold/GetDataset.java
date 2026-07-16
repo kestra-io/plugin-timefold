@@ -7,6 +7,7 @@ import io.kestra.core.http.HttpResponse;
 import io.kestra.core.http.client.HttpClient;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
+import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.runners.RunContext;
@@ -77,6 +78,7 @@ public class GetDataset extends AbstractTimefoldTask implements RunnableTask<Get
         title = "The job ID of the solving run to retrieve",
         description = "Returned as `jobId` by `io.kestra.plugin.timefold.Solve`."
     )
+    @PluginProperty(group = "main")
     @NotNull
     private Property<String> jobId;
 

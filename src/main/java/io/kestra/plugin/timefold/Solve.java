@@ -9,6 +9,7 @@ import io.kestra.core.http.client.HttpClient;
 import io.kestra.core.exceptions.KilledException;
 import io.kestra.core.models.annotations.Example;
 import io.kestra.core.models.annotations.Plugin;
+import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Data;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.RunnableTask;
@@ -155,6 +156,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
             "expression that resolves to the `modelInput` object. The value is wrapped into the " +
             "`{ \"modelInput\": ... }` request body sent to Timefold."
     )
+    @PluginProperty(group = "main")
     @NotNull
     private Object modelInput;
 
@@ -164,6 +166,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
             "Controls how long the platform solver runs; it does not affect when this task returns. " +
             "Defaults to `PT60S` (60 seconds)."
     )
+    @PluginProperty(group = "execution")
     @NotNull
     @Builder.Default
     private Property<Duration> solveDuration = Property.ofValue(Duration.ofSeconds(60));
@@ -172,6 +175,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         title = "Optional run name attached to the submitted dataset",
         description = "Stored as `config.run.name` and shown in the Timefold Platform UI."
     )
+    @PluginProperty(group = "advanced")
     private Property<String> runName;
 
     @Schema(
@@ -180,6 +184,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
             "`requestTimeout` elapses) and returns the full `modelOutput`, `solverStatus`, and `score`. " +
             "When `false` (the default) the task submits the dataset and returns the `jobId` immediately."
     )
+    @PluginProperty(group = "execution")
     @NotNull
     @Builder.Default
     private Property<Boolean> wait = Property.ofValue(false);
@@ -188,6 +193,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         title = "How often to poll the Timefold Platform for the solver status",
         description = "Only applies when `wait` is `true`. Defaults to `PT2S` (every 2 seconds)."
     )
+    @PluginProperty(group = "execution")
     @NotNull
     @Builder.Default
     private Property<Duration> pollInterval = Property.ofValue(Duration.ofSeconds(2));
@@ -198,6 +204,7 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
             "this duration the task fails. Should comfortably exceed `solveDuration`. " +
             "Defaults to `PT10M` (10 minutes)."
     )
+    @PluginProperty(group = "execution")
     @NotNull
     @Builder.Default
     private Property<Duration> requestTimeout = Property.ofValue(Duration.ofMinutes(10));
