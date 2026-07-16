@@ -100,7 +100,7 @@ dependencies {
     testImplementation "org.hamcrest:hamcrest-library"
 
     // wiremock
-    testImplementation "org.wiremock:wiremock-standalone:3.13.0"
+    testImplementation "org.wiremock:wiremock-jetty12"
 }
 
 /**********************************************************************************************************************\
