@@ -86,18 +86,63 @@ import java.util.concurrent.atomic.AtomicReference;
         ),
         @Example(
             full = true,
-            title = "Submit an Employee Scheduling problem with input from a previous task.",
+            title = "Build an Employee Scheduling dataset from CSV inputs and solve.",
             code = """
                 id: timefold_schedule
                 namespace: company.team
 
+                # employees.csv  (name becomes the employee id):
+                #   name,skills
+                #   Alice,nursing|doctor
+                #   Bob,nursing
+                #
+                # shifts.csv  (required_skill becomes a requiredSkills object array):
+                #   id,start,end,required_skill
+                #   SHIFT-001,2027-02-01T08:00:00Z,2027-02-01T16:00:00Z,nursing
+                #   SHIFT-002,2027-02-01T16:00:00Z,2027-02-02T00:00:00Z,nursing
+
+                inputs:
+                  - id: employees_csv
+                    type: FILE
+                  - id: shifts_csv
+                    type: FILE
+
                 tasks:
+                  - id: build_dataset
+                    type: io.kestra.plugin.scripts.python.Script
+                    inputFiles:
+                      employees.csv: "{{ inputs.employees_csv }}"
+                      shifts.csv: "{{ inputs.shifts_csv }}"
+                    script: |
+                      import csv
+                      from kestra import Kestra
+
+                      employees = []
+                      with open("employees.csv") as f:
+                          for row in csv.DictReader(f):
+                              employees.append({
+                                  "id": row["name"],
+                                  "skills": [{"id": s} for s in row["skills"].split("|")],
+                              })
+
+                      shifts = []
+                      with open("shifts.csv") as f:
+                          for row in csv.DictReader(f):
+                              shifts.append({
+                                  "id": row["id"],
+                                  "start": row["start"],
+                                  "end": row["end"],
+                                  "requiredSkills": [row["required_skill"]],
+                              })
+
+                      Kestra.outputs({"modelInput": {"employees": employees, "shifts": shifts}})
+
                   - id: solve
                     type: io.kestra.plugin.timefold.Solve
                     apiKey: "{{ secret('TIMEFOLD_API_KEY') }}"
                     model: EMPLOYEE_SCHEDULING
                     solveDuration: PT1M
-                    modelInput: "{{ outputs.build_dataset.modelInput }}"
+                    modelInput: "{{ outputs.build_dataset.vars.modelInput }}"
                 """
         ),
         @Example(
