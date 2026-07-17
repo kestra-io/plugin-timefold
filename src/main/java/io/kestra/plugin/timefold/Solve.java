@@ -219,12 +219,12 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         title = "Maximum time Timefold should spend solving",
         description = "Passed as the `config.run.termination.spentLimit` of the submitted dataset. " +
             "Controls how long the platform solver runs; it does not affect when this task returns. " +
-            "Defaults to `PT60S` (60 seconds)."
+            "When omitted, the Timefold Platform uses its built-in [diminishing-returns termination]" +
+            "(https://docs.timefold.ai/timefold-platform/latest/how-tos/configuration-parameters-and-profiles#_run_termination_settings) " +
+            "to decide how long to run based on solution quality improvements over time."
     )
     @PluginProperty(group = "execution")
-    @NotNull
-    @Builder.Default
-    private Property<Duration> solveDuration = Property.ofValue(Duration.ofSeconds(60));
+    private Property<Duration> solveDuration;
 
     @Schema(
         title = "Optional run name attached to the submitted dataset",
@@ -286,7 +286,9 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         killLogger = logger;
 
         Connection conn = renderConnection(runContext);
-        Duration rSolveDuration = runContext.render(this.solveDuration).as(Duration.class).orElseThrow();
+        Duration rSolveDuration = this.solveDuration != null
+            ? runContext.render(this.solveDuration).as(Duration.class).orElse(null)
+            : null;
         String rRunName = runContext.render(this.runName).as(String.class).orElse(null);
         boolean rWait = runContext.render(this.wait).as(Boolean.class).orElse(false);
 
@@ -354,7 +356,9 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
         if (runName != null) {
             run.put("name", runName);
         }
-        run.putObject("termination").put("spentLimit", formatDuration(solveDuration));
+        if (solveDuration != null) {
+            run.putObject("termination").put("spentLimit", formatDuration(solveDuration));
+        }
 
         // modelInput, r from whatever the user provided (map / json string / expression).
         var rInput = Data.from(this.modelInput).read(runContext).blockFirst();
@@ -394,7 +398,9 @@ public class Solve extends AbstractTimefoldTask implements RunnableTask<Solve.Ou
                                        Logger logger) throws Exception {
         String metadataUrl = collectionUrl + "/" + jobId + "/metadata";
         long deadline = System.nanoTime() + requestTimeout.toNanos();
-        long terminateAfter = System.nanoTime() + solveDuration.plusSeconds(10).toNanos();
+        long terminateAfter = System.nanoTime() + (solveDuration != null
+            ? solveDuration.plusSeconds(10)
+            : Duration.ofHours(12)).toNanos();
         boolean terminationRequested = false;
 
         while (true) {

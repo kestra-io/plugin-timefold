@@ -18,3 +18,10 @@ Consult the relevant user guide for the exact `modelInput` schema expected by ea
 
 - `Solve`: submits a `modelInput` dataset to a Timefold model and returns a `jobId`. Optionally polls until solving completes and returns the full `modelOutput`.
 - `GetDataset`: retrieves the current state of a previously submitted job by `jobId`. Use this after `Solve` (with `wait: false`) to fetch the solution once solving has completed.
+
+## Large datasets and long solve times
+
+When `solveDuration` is omitted, the Timefold Platform uses its built-in [diminishing-returns termination](https://docs.timefold.ai/timefold-platform/latest/how-tos/configuration-parameters-and-profiles#_run_termination_settings) to decide how long to run. It stops when further solving is unlikely to meaningfully improve the solution.
+
+For large datasets where solving may take a significant amount of time, set `wait` to `false` (or omit it, `false` is the default) in the `Solve` task.
+This returns the `jobId` immediately without blocking the flow. Use a subsequent `GetDataset` task to retrieve the solution once solving is complete, polling on your own schedule.
