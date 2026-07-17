@@ -39,18 +39,28 @@
 
 ## Why
 
-- What user problem does this solve? Teams need a concrete starting point for building and validating new Kestra plugins without recreating the same project scaffolding from scratch.
-- Why would a team adopt this plugin in a workflow? It gives plugin authors a ready-made reference repo they can adapt alongside their own build, test, and publishing workflow.
-- What operational/business outcome does it enable? It shortens plugin delivery time, reduces setup mistakes, and makes internal or partner plugin development more repeatable.
+- **What user problem does this solve?** Teams need to run AI-powered optimization — employee scheduling, field service routing, pick-up and delivery routing — from within their orchestrated workflows instead of relying on one-off scripts or manual API calls.
+- **Why would a team adopt this plugin in a workflow?** It keeps Timefold solving steps in the same Kestra flow as upstream data preparation, approvals, retries, notifications, and downstream systems — without custom glue code.
+- **What operational/business outcome does it enable?** It reduces manual handoffs and fragmented tooling while improving reliability, traceability, and delivery speed for processes that depend on optimization results.
 
 ## What
 
 - Provides plugin components under `io.kestra.plugin.timefold`.
-- Includes classes such as `Example`, `Trigger`.
+- `Solve` — submits a `modelInput` dataset to a Timefold Platform model and returns a `jobId`. Optionally polls until solving completes and returns the full `modelOutput`.
+- `GetDataset` — retrieves the current state of a previously submitted job by `jobId`.
+
+## Supported models
+
+| Model | Kestra value | User guide |
+|---|---|---|
+| Employee Scheduling | `EMPLOYEE_SCHEDULING` | [docs.timefold.ai/employee-scheduling](https://docs.timefold.ai/employee-scheduling/latest) |
+| Field Service Routing | `FIELD_SERVICE_ROUTING` | [docs.timefold.ai/field-service-routing](https://docs.timefold.ai/field-service-routing/latest) |
+| Pick-up and Delivery Routing | `PICKUP_DELIVERY_ROUTING` | [docs.timefold.ai/pickup-delivery-routing](https://docs.timefold.ai/pickup-delivery-routing/latest) |
 
 ## Documentation
 * Full documentation can be found under: [kestra.io/docs](https://kestra.io/docs)
-* Documentation for developing a plugin is included in the [Plugin Developer Guide](https://kestra.io/docs/plugin-developer-guide/)
+* Plugin developer guide: [kestra.io/docs/plugin-developer-guide](https://kestra.io/docs/plugin-developer-guide/)
+* Timefold Platform documentation: [docs.timefold.ai](https://docs.timefold.ai/)
 
 
 ## License
