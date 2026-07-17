@@ -38,7 +38,7 @@ import java.net.URI;
         "as reported by the platform at the time of the call.\n\n" +
         "Use this task after `io.kestra.plugin.timefold.Solve` to retrieve the solution once " +
         "solving has completed. See the " +
-        "[Timefold API documentation](https://docs.timefold.ai/field-service-routing/latest/understanding-the-api)."
+        "[Timefold API documentation](https://docs.timefold.ai/)."
 )
 @Plugin(
     examples = {

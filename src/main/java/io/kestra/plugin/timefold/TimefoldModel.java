@@ -5,12 +5,13 @@ package io.kestra.plugin.timefold;
  * <p>
  * Each model is exposed on the platform under
  * {@code /api/models/{modelId}/v1/{resource}} where the resource collection
- * differs per model (Field Service Routing uses {@code route-plans},
- * Employee Scheduling uses {@code schedules}).
+ * differs per model (Field Service Routing and Pick-up and Delivery Routing use
+ * {@code route-plans}; Employee Scheduling uses {@code schedules}).
  */
 public enum TimefoldModel {
     FIELD_SERVICE_ROUTING("field-service-routing", "route-plans"),
-    EMPLOYEE_SCHEDULING("employee-scheduling", "schedules");
+    EMPLOYEE_SCHEDULING("employee-scheduling", "schedules"),
+    PICKUP_DELIVERY_ROUTING("pickup-delivery-routing", "route-plans");
 
     private final String modelId;
     private final String resource;

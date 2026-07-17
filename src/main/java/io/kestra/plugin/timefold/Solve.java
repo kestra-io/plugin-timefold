@@ -51,7 +51,7 @@ import java.util.concurrent.atomic.AtomicReference;
         "When `wait` is `true` the task submits the dataset and polls the platform until solving " +
         "completes (or `requestTimeout` elapses), then returns the `jobId`, `solverStatus`, `score`, " +
         "and the full `modelOutput`. See the " +
-        "[Timefold API documentation](https://docs.timefold.ai/field-service-routing/latest/understanding-the-api)."
+        "[Timefold API documentation](https://docs.timefold.ai/)."
 )
 @Plugin(
     examples = {
