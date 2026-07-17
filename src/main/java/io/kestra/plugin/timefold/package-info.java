@@ -1,7 +1,7 @@
 @PluginSubGroup(
     title = "Timefold",
     description = "Timefold plugin for Kestra",
-    categories = PluginSubGroup.PluginCategory.DATA
+    categories = { PluginSubGroup.PluginCategory.DATA, PluginSubGroup.PluginCategory.AI }
 )
 package io.kestra.plugin.timefold;
 
